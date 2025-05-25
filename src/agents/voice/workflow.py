@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import abc
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Optional
 
 from ..agent import Agent
 from ..items import TResponseInputItem
 from ..result import RunResultStreaming
 from ..run import Runner
+from .model import VoiceConfiguration, VoiceConfigurationProvider
 
 
-class VoiceWorkflowBase(abc.ABC):
+class VoiceWorkflowBase(abc.ABC, VoiceConfigurationProvider):
     """
     A base class for a voice workflow. You must implement the `run` method. A "workflow" is any
     code you want, that receives a transcription and yields text that will be turned into speech
@@ -21,6 +22,29 @@ class VoiceWorkflowBase(abc.ABC):
     If you have a simple workflow that has a single starting agent and no custom logic, you can
     use `SingleAgentVoiceWorkflow` directly.
     """
+
+    @property
+    def current_agent(self) -> Optional[Agent[Any]]:
+        """
+        Get the current agent if available.
+        Default implementation returns None - subclasses should override if they track agents.
+        """
+        return None
+    
+    def get_voice_configuration(self) -> Optional[VoiceConfiguration]:
+        """
+        Get the current voice configuration based on the current agent.
+        Default implementation checks if current_agent has voice configuration.
+        """
+        agent = self.current_agent
+        if agent is None:
+            return None
+            
+        # Check if agent has voice configuration capabilities
+        if hasattr(agent, "get_voice_configuration"):
+            return agent.get_voice_configuration()
+        
+        return None
 
     @abc.abstractmethod
     def run(self, transcription: str) -> AsyncIterator[str]:
@@ -49,6 +73,15 @@ class SingleAgentWorkflowCallbacks:
     def on_run(self, workflow: SingleAgentVoiceWorkflow, transcription: str) -> None:
         """Called when the workflow is run."""
         pass
+        
+    def on_agent_change(self, workflow: SingleAgentVoiceWorkflow, new_agent: Any) -> None:
+        """Called when the agent changes, including during handoffs.
+        
+        Args:
+            workflow: The workflow instance.
+            new_agent: The new agent that will be used for the next turn.
+        """
+        pass
 
 
 class SingleAgentVoiceWorkflow(VoiceWorkflowBase):
@@ -67,7 +100,12 @@ class SingleAgentVoiceWorkflow(VoiceWorkflowBase):
         """
         self._input_history: list[TResponseInputItem] = []
         self._current_agent = agent
-        self._callbacks = callbacks
+        self._callbacks = callbacks or SingleAgentWorkflowCallbacks()
+        
+    @property
+    def current_agent(self) -> Agent[Any]:
+        """Get the current agent."""
+        return self._current_agent
 
     async def run(self, transcription: str) -> AsyncIterator[str]:
         if self._callbacks:
@@ -90,4 +128,8 @@ class SingleAgentVoiceWorkflow(VoiceWorkflowBase):
 
         # Update the input history and current agent
         self._input_history = result.to_input_list()
-        self._current_agent = result.last_agent
+        
+        # Check if the agent has changed (e.g., due to a handoff)
+        if result.last_agent is not self._current_agent:
+            self._callbacks.on_agent_change(self, result.last_agent)
+            self._current_agent = result.last_agent

@@ -3,7 +3,7 @@ from __future__ import annotations
 import abc
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, Protocol, Optional
 
 from .imports import np, npt
 from .input import AudioInput, StreamedAudioInput
@@ -16,6 +16,27 @@ DEFAULT_TTS_BUFFER_SIZE = 120
 
 TTSVoice = Literal["alloy", "ash", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer"]
 """Exportable type for the TTSModelSettings voice enum"""
+
+
+@dataclass
+class VoiceConfiguration:
+    """Configuration for voice synthesis including both model and settings."""
+    tts_model: Optional[TTSModel] = None
+    tts_model_name: Optional[str] = None
+    tts_settings: Optional[TTSModelSettings] = None
+    
+    def get_effective_model(self, model_provider) -> TTSModel:
+        """Get the effective TTS model, initializing it if necessary."""
+        if self.tts_model is None and self.tts_model_name is not None:
+            self.tts_model = model_provider.get_tts_model(self.tts_model_name)
+        return self.tts_model
+
+
+class VoiceConfigurationProvider(Protocol):
+    """Protocol for any class that can provide voice configuration."""
+    def get_voice_configuration(self) -> Optional[VoiceConfiguration]:
+        """Get the current voice configuration if available."""
+        ...
 
 @dataclass
 class TTSModelSettings:

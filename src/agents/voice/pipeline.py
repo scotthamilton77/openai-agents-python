@@ -6,7 +6,7 @@ from .._run_impl import TraceCtxManager
 from ..exceptions import UserError
 from ..logger import logger
 from .input import AudioInput, StreamedAudioInput
-from .model import STTModel, TTSModel
+from .model import STTModel, TTSModel, VoiceConfiguration, VoiceConfigurationProvider
 from .pipeline_config import VoicePipelineConfig
 from .result import StreamedAudioResult
 from .workflow import VoiceWorkflowBase
@@ -65,9 +65,33 @@ class VoicePipeline:
             raise UserError(f"Unsupported audio input type: {type(audio_input)}")
 
     def _get_tts_model(self) -> TTSModel:
+        """Get the TTS model using pipeline defaults.
+        
+        Note: This is maintained for backward compatibility. New code should use
+        get_effective_voice_configuration instead.
+        """
         if not self.tts_model:
             self.tts_model = self.config.model_provider.get_tts_model(self._tts_model_name)
         return self.tts_model
+        
+    def get_effective_voice_configuration(self) -> VoiceConfiguration:
+        """Get the effective voice configuration to use.
+        
+        This checks if the workflow provides a voice configuration. If not,
+        it falls back to the pipeline's default configuration.
+        """
+        # Try to get configuration from workflow
+        if isinstance(self.workflow, VoiceConfigurationProvider):
+            workflow_config = self.workflow.get_voice_configuration()
+            if workflow_config is not None:
+                return workflow_config
+                
+        # Create default configuration from pipeline settings
+        return VoiceConfiguration(
+            tts_model=self.tts_model,
+            tts_model_name=self._tts_model_name, 
+            tts_settings=self.config.tts_settings
+        )
 
     def _get_stt_model(self) -> STTModel:
         if not self.stt_model:
@@ -95,8 +119,13 @@ class VoicePipeline:
         ):
             input_text = await self._process_audio_input(audio_input)
 
+            # Get effective voice configuration
+            voice_config = self.get_effective_voice_configuration()
+            tts_model = voice_config.tts_model or self._get_tts_model()
+            tts_settings = voice_config.tts_settings or self.config.tts_settings
+
             output = StreamedAudioResult(
-                self._get_tts_model(), self.config.tts_settings, self.config
+                tts_model, tts_settings, self.config
             )
 
             async def stream_events():
@@ -121,8 +150,13 @@ class VoicePipeline:
             metadata=self.config.trace_metadata,
             disabled=self.config.tracing_disabled,
         ):
+            # Get effective voice configuration
+            voice_config = self.get_effective_voice_configuration()
+            tts_model = voice_config.tts_model or self._get_tts_model()
+            tts_settings = voice_config.tts_settings or self.config.tts_settings
+
             output = StreamedAudioResult(
-                self._get_tts_model(), self.config.tts_settings, self.config
+                tts_model, tts_settings, self.config
             )
 
             transcription_session = await self._get_stt_model().create_session(
