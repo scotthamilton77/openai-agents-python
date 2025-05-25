@@ -11,7 +11,7 @@ This guide explains how to use the new `VoiceConfiguration` system to customize 
 Use the `with_voice_config` helper function to add voice configuration to any agent:
 
 ```python
-from agents.voice.agent import with_voice_config
+from agents.voice.voiceagent import with_voice_config
 from agents.voice.model import TTSModelSettings
 from agents.agent import Agent
 
