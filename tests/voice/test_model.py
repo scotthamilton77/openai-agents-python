@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, Mock
 import pytest
 
 from agents.voice import TTSModel, TTSModelSettings, VoiceConfiguration
-from agents.voice.model_provider import ModelProvider
+from agents.voice import VoiceModelProvider
 
 
 # --- Mock TTSModel ---
@@ -14,12 +14,12 @@ from agents.voice.model_provider import ModelProvider
 # a simple stub might be needed, but let's try with MagicMock first.
 
 # --- Mock ModelProvider ---
-class MockModelProvider(ModelProvider):
+class MockModelProvider(VoiceModelProvider):
     def __init__(self):
         # self.get_tts_model will be a Mock instance to track calls and set return values
-        self.get_tts_model = MagicMock(spec=ModelProvider.get_tts_model)
+        self.get_tts_model = MagicMock(spec=VoiceModelProvider.get_tts_model)
 
-    # Implement other abstract methods if ModelProvider has any, otherwise pass
+    # Implement other abstract methods if VoiceModelProvider has any, otherwise pass
     def get_stt_model(self, model_name: str | None = None, settings: TTSModelSettings | None = None):
         raise NotImplementedError("STT model provider not implemented for these tests.")
 
