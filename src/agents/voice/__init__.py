@@ -19,7 +19,7 @@ from .pipeline import VoicePipeline
 from .pipeline_config import VoicePipelineConfig
 from .result import StreamedAudioResult
 from .utils import get_sentence_based_splitter
-from .voiceagent import VoiceAgentMixin
+from .voiceagent import VoiceAgentMixin, with_voice_config, with_voice_configuration
 from .workflow import (
     SingleAgentVoiceWorkflow,
     SingleAgentWorkflowCallbacks,
@@ -56,5 +56,7 @@ __all__ = [
     "StreamedTranscriptionSession",
     "OpenAISTTTranscriptionSession",
     "VoiceAgentMixin",
+    "with_voice_config",
+    "with_voice_configuration",
     "STTWebsocketConnectionError",
 ]

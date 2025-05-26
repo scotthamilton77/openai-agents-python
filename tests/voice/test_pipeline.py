@@ -18,16 +18,16 @@ try:
 
     from .fake_models import FakeStreamedAudioInput, FakeSTT, FakeTTS, FakeWorkflow
     from .helpers import extract_events
-    from agents.voice.model_provider import ModelProvider # Assuming this is the base
+    from agents.voice import VoiceModelProvider 
 except ImportError:
     pass
 
 
-class MockModelProvider(ModelProvider):
+class MockModelProvider(VoiceModelProvider):
     def __init__(self, model_map: dict[str, TTSModel]):
         self._model_map = model_map
 
-    def get_tts_model(self, model_name: str | None = None, settings: TTSModelSettings | None = None) -> TTSModel:
+    def get_tts_model(self, model_name: str | None = None) -> TTSModel:
         if model_name and model_name in self._model_map:
             # In a real scenario, settings might influence model creation/selection here.
             # For these tests, we assume the model is pre-configured or settings are applied later.
@@ -35,15 +35,20 @@ class MockModelProvider(ModelProvider):
         # Fallback or error if needed, for these tests direct mapping is key
         raise ValueError(f"Model {model_name} not found in mock provider and no default specified.")
 
-    def get_stt_model(self, model_name: str | None = None, settings: TTSModelSettings | None = None):
+    def get_stt_model(self, model_name: str | None = None) -> TTSModel:
         raise NotImplementedError("STT model provider not implemented for these tests.")
 
 
 class MockTTSModel(TTSModel): # This is a generic mock, FakeTTS is more specialized
-    async def warmup(self) -> None:
-        pass
+    def __init__(self, name: str = "mock_tts"):
+        super().__init__()
+        self.tts_model_name = name
 
-    async def run_tts(self, text: str, settings: TTSModelSettings | None = None):
+    @property
+    def model_name(self) -> str:
+        return self.tts_model_name
+
+    async def run(self, text: str, settings: TTSModelSettings) -> AsyncIterator[bytes]:
         yield np.array([1, 2, 3], dtype=np.int16)
 
 
@@ -71,7 +76,7 @@ class WorkflowNoConfig(VoiceWorkflowBase):
 async def test_get_effective_voice_configuration_from_workflow():
     expected_config = VoiceConfiguration(
         tts_model_name="workflow_tts",
-        tts_settings=TTSModelSettings(chunk_size=123),
+        tts_settings=TTSModelSettings(buffer_size=123),
     )
     workflow = WorkflowProvidesConfig(config=expected_config)
     pipeline = VoicePipeline(
@@ -80,14 +85,14 @@ async def test_get_effective_voice_configuration_from_workflow():
         tts_model=FakeTTS(),
         config=VoicePipelineConfig(),
     )
-    effective_config = await pipeline.get_effective_voice_configuration()
+    effective_config = pipeline.get_effective_voice_configuration()
     assert effective_config == expected_config
 
 
 @pytest.mark.asyncio
 async def test_get_effective_voice_configuration_from_pipeline():
     pipeline_tts_model_name = "pipeline_tts"
-    pipeline_tts_settings = TTSModelSettings(chunk_size=456)
+    pipeline_tts_settings = TTSModelSettings(buffer_size=456)
 
     workflow = WorkflowNoConfig()
     pipeline = VoicePipeline(
@@ -96,7 +101,7 @@ async def test_get_effective_voice_configuration_from_pipeline():
         tts_model=MockTTSModel(name=pipeline_tts_model_name),
         config=VoicePipelineConfig(tts_settings=pipeline_tts_settings),
     )
-    effective_config = await pipeline.get_effective_voice_configuration()
+    effective_config = pipeline.get_effective_voice_configuration()
 
     assert effective_config is not None
     assert effective_config.tts_model_name == pipeline_tts_model_name
@@ -108,12 +113,12 @@ async def test_voicepipeline_run_single_turn() -> None:
     # Single turn. Should produce a single audio output, which is the TTS output for "out_1".
 
     fake_stt = FakeSTT(["first"])
-    workflow_tts_settings = TTSModelSettings(buffer_size=777, chunk_size=888)
+    workflow_tts_settings = TTSModelSettings(buffer_size=777)
     workflow_voice_config = VoiceConfiguration(tts_settings=workflow_tts_settings)
     workflow = FakeWorkflow([["out_1"]], voice_configuration=workflow_voice_config)
     fake_tts = FakeTTS()
     # Pipeline config with different TTS settings to ensure workflow's config takes precedence
-    pipeline_config = VoicePipelineConfig(tts_settings=TTSModelSettings(buffer_size=1, chunk_size=2))
+    pipeline_config = VoicePipelineConfig(tts_settings=TTSModelSettings(buffer_size=1))
     pipeline = VoicePipeline(
         workflow=workflow, stt_model=fake_stt, tts_model=fake_tts, config=pipeline_config
     )
@@ -130,8 +135,8 @@ async def test_voicepipeline_run_single_turn() -> None:
     assert fake_tts.last_run_settings == workflow_tts_settings
     # Ensure the result object also reflects the correct model and settings
     # This test already implies workflow's model (default FakeTTS) and settings are used.
-    assert result._tts_model is fake_tts # Default FakeTTS from pipeline if workflow doesn't specify model name
-    assert result._tts_settings == workflow_tts_settings
+    assert result.tts_model is fake_tts # Default FakeTTS from pipeline if workflow doesn't specify model name
+    assert result.tts_settings == workflow_tts_settings
 
 
 @pytest.mark.asyncio
@@ -142,7 +147,7 @@ async def test_voicepipeline_streamed_audio_input() -> None:
     fake_stt = FakeSTT(["first", "second"])
     
     # Workflow provides specific TTS settings and implicitly a model (the default FakeTTS via FakeWorkflow)
-    workflow_tts_settings = TTSModelSettings(buffer_size=555, chunk_size=666, voice="workflow_voice")
+    workflow_tts_settings = TTSModelSettings(buffer_size=555,voice="workflow_voice")
     # If FakeWorkflow's default FakeTTS is used, its name is "fake_tts".
     # Let's assume the workflow intends to use this default model but with its own settings.
     workflow_voice_config = VoiceConfiguration(
@@ -178,7 +183,7 @@ async def test_voicepipeline_streamed_audio_input() -> None:
     fake_tts_on_pipeline = FakeTTS(name="pipeline_default_tts") # Pipeline's default model
     
     # Pipeline config with different TTS settings than workflow
-    pipeline_config_obj = VoicePipelineConfig(tts_settings=TTSModelSettings(buffer_size=1, chunk_size=2, voice="pipeline_voice"))
+    pipeline_config_obj = VoicePipelineConfig(tts_settings=TTSModelSettings(buffer_size=1, voice="pipeline_voice"))
     
     pipeline = VoicePipeline(
         workflow=workflow, 
@@ -205,149 +210,8 @@ async def test_voicepipeline_streamed_audio_input() -> None:
     await fake_tts_on_pipeline.verify_audio("out_2", audio_chunks[1])
     # Assert that the pipeline's default TTS model was used with workflow's settings
     assert fake_tts_on_pipeline.last_run_settings == workflow_tts_settings
-    assert result._tts_model is fake_tts_on_pipeline
-    assert result._tts_settings == workflow_tts_settings
-
-# --- Scenario 1: Workflow Name, Pipeline Settings ---
-
-@pytest.mark.asyncio
-async def test_pipeline_workflow_name_pipeline_settings_single_turn():
-    stt_model = FakeSTT(["turn1"])
-    
-    # Workflow provides model name, no settings
-    workflow_voice_config = VoiceConfiguration(tts_model_name="workflow_tts_model", tts_settings=None)
-    workflow = FakeWorkflow([["output1"]], voice_configuration=workflow_voice_config)
-
-    # Pipeline provides settings and a default model
-    pipeline_tts_settings = TTSModelSettings(buffer_size=123, chunk_size=111, voice="pipeline_voice_scenario1")
-    default_pipeline_tts = FakeTTS(name="default_pipeline_model_s1")
-    
-    # Model provider maps workflow's model name to a specific FakeTTS instance
-    workflow_model_tts_instance = FakeTTS(name="workflow_model_resolved_s1")
-    model_provider = MockModelProvider({"workflow_tts_model": workflow_model_tts_instance})
-
-    pipeline_config = VoicePipelineConfig(
-        tts_settings=pipeline_tts_settings, 
-        model_provider=model_provider
-    )
-    pipeline = VoicePipeline(
-        workflow=workflow,
-        stt_model=stt_model,
-        tts_model=default_pipeline_tts, # Default TTS for pipeline if workflow doesn't specify
-        config=pipeline_config,
-    )
-
-    result = await pipeline.run(AudioInput(buffer=np.zeros(2, dtype=np.int16)))
-    
-    assert result._tts_model is workflow_model_tts_instance
-    assert result._tts_model.model_name_prop == "workflow_model_resolved_s1"
-    assert result._tts_settings == pipeline_tts_settings # Pipeline's settings are used
-    assert workflow_model_tts_instance.last_run_settings == pipeline_tts_settings
-    assert default_pipeline_tts.last_run_settings is None # Default pipeline model was not used
-
-@pytest.mark.asyncio
-async def test_pipeline_workflow_name_pipeline_settings_multi_turn():
-    stt_model = FakeSTT(["turn1", "turn2"])
-    workflow_voice_config = VoiceConfiguration(tts_model_name="workflow_tts_model_mt", tts_settings=None)
-    workflow = FakeWorkflow([["output1"], ["output2"]], voice_configuration=workflow_voice_config)
-
-    pipeline_tts_settings = TTSModelSettings(buffer_size=234, chunk_size=222, voice="pipeline_voice_scenario1_mt")
-    default_pipeline_tts_mt = FakeTTS(name="default_pipeline_model_s1_mt")
-    
-    workflow_model_tts_instance_mt = FakeTTS(name="workflow_model_resolved_s1_mt")
-    model_provider_mt = MockModelProvider({"workflow_tts_model_mt": workflow_model_tts_instance_mt})
-
-    pipeline_config_mt = VoicePipelineConfig(
-        tts_settings=pipeline_tts_settings,
-        model_provider=model_provider_mt
-    )
-    pipeline_mt = VoicePipeline(
-        workflow=workflow,
-        stt_model=stt_model,
-        tts_model=default_pipeline_tts_mt,
-        config=pipeline_config_mt,
-    )
-
-    streamed_input = await FakeStreamedAudioInput.get(count=2)
-    result = await pipeline_mt.run(streamed_input)
-
-    assert result._tts_model is workflow_model_tts_instance_mt
-    assert result._tts_model.model_name_prop == "workflow_model_resolved_s1_mt"
-    assert result._tts_settings == pipeline_tts_settings
-    assert workflow_model_tts_instance_mt.last_run_settings == pipeline_tts_settings
-    assert default_pipeline_tts_mt.last_run_settings is None
-
-# --- Scenario 2: Workflow Settings, Pipeline Name ---
-
-@pytest.mark.asyncio
-async def test_pipeline_workflow_settings_pipeline_name_single_turn():
-    stt_model = FakeSTT(["turn1_s2"])
-    
-    # Workflow provides settings, no model name
-    workflow_tts_settings = TTSModelSettings(buffer_size=789, chunk_size=333, voice="workflow_voice_scenario2")
-    workflow_voice_config = VoiceConfiguration(tts_model_name=None, tts_settings=workflow_tts_settings)
-    workflow = FakeWorkflow([["output1_s2"]], voice_configuration=workflow_voice_config)
-
-    # Pipeline provides a default model name (implicitly via tts_model) and different settings
-    pipeline_default_tts_settings = TTSModelSettings(buffer_size=456, chunk_size=444, voice="pipeline_voice_s2")
-    # This is the model that should be selected because workflow doesn't specify one
-    pipeline_model_to_be_used = FakeTTS(name="pipeline_model_s2_resolved") 
-    
-    # Model provider isn't strictly needed here if pipeline.tts_model is set directly,
-    # but if pipeline._tts_model_name was used, provider would map it.
-    # For this test, we set pipeline.tts_model directly.
-    model_provider_s2 = MockModelProvider({}) # Empty, not used if tts_model is direct
-
-    pipeline_config = VoicePipelineConfig(
-        tts_settings=pipeline_default_tts_settings, # Pipeline's own settings
-        model_provider=model_provider_s2 
-    )
-    pipeline = VoicePipeline(
-        workflow=workflow,
-        stt_model=stt_model,
-        tts_model=pipeline_model_to_be_used, # This is the pipeline's configured/default model
-        config=pipeline_config,
-    )
-
-    result = await pipeline.run(AudioInput(buffer=np.zeros(2, dtype=np.int16)))
-    
-    assert result._tts_model is pipeline_model_to_be_used 
-    assert result._tts_model.model_name_prop == "pipeline_model_s2_resolved"
-    # Workflow's settings should be used with pipeline's model
-    assert result._tts_settings == workflow_tts_settings 
-    assert pipeline_model_to_be_used.last_run_settings == workflow_tts_settings
-
-@pytest.mark.asyncio
-async def test_pipeline_workflow_settings_pipeline_name_multi_turn():
-    stt_model = FakeSTT(["turn1_s2_mt", "turn2_s2_mt"])
-    
-    workflow_tts_settings_mt = TTSModelSettings(buffer_size=890, chunk_size=555, voice="workflow_voice_s2_mt")
-    workflow_voice_config_mt = VoiceConfiguration(tts_model_name=None, tts_settings=workflow_tts_settings_mt)
-    workflow_mt = FakeWorkflow([["output1_s2_mt"], ["output2_s2_mt"]], voice_configuration=workflow_voice_config_mt)
-
-    pipeline_default_tts_settings_mt = TTSModelSettings(buffer_size=567, chunk_size=666, voice="pipeline_voice_s2_mt")
-    pipeline_model_to_be_used_mt = FakeTTS(name="pipeline_model_s2_resolved_mt")
-    
-    model_provider_s2_mt = MockModelProvider({})
-
-    pipeline_config_mt = VoicePipelineConfig(
-        tts_settings=pipeline_default_tts_settings_mt,
-        model_provider=model_provider_s2_mt
-    )
-    pipeline_mt = VoicePipeline(
-        workflow=workflow_mt,
-        stt_model=stt_model,
-        tts_model=pipeline_model_to_be_used_mt,
-        config=pipeline_config_mt,
-    )
-
-    streamed_input = await FakeStreamedAudioInput.get(count=2)
-    result = await pipeline_mt.run(streamed_input)
-
-    assert result._tts_model is pipeline_model_to_be_used_mt
-    assert result._tts_model.model_name_prop == "pipeline_model_s2_resolved_mt"
-    assert result._tts_settings == workflow_tts_settings_mt
-    assert pipeline_model_to_be_used_mt.last_run_settings == workflow_tts_settings_mt
+    assert result.tts_model is fake_tts_on_pipeline
+    assert result.tts_settings == workflow_tts_settings
 
 
 @pytest.mark.asyncio

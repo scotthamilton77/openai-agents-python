@@ -58,7 +58,7 @@ def with_voice_config(
     # Create configuration
     config = VoiceConfiguration(
         tts_model=tts_model,
-        tts_model_name=tts_model_name,
+        tts_model_name=tts_model.model_name if tts_model else tts_model_name,
         tts_settings=tts_settings
     )
     

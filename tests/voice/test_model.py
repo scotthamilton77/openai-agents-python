@@ -16,11 +16,14 @@ from agents.voice import VoiceModelProvider
 # --- Mock ModelProvider ---
 class MockModelProvider(VoiceModelProvider):
     def __init__(self):
-        # self.get_tts_model will be a Mock instance to track calls and set return values
-        self.get_tts_model = MagicMock(spec=VoiceModelProvider.get_tts_model)
+        # Track calls and set return values for get_tts_model
+        self.get_tts_model_mock = MagicMock()
+
+    def get_tts_model(self, model_name: str | None) -> TTSModel:
+        return self.get_tts_model_mock(model_name=model_name)
 
     # Implement other abstract methods if VoiceModelProvider has any, otherwise pass
-    def get_stt_model(self, model_name: str | None = None, settings: STTModelSettings | None = None):
+    def get_stt_model(self, model_name: str | None = None):
         raise NotImplementedError("STT model provider not implemented for these tests.")
 
 
@@ -33,7 +36,7 @@ def test_get_effective_model_name_provided_model_none():
     """
     mock_provider = MockModelProvider()
     mock_returned_tts_model = MagicMock(spec=TTSModel)
-    mock_provider.get_tts_model.return_value = mock_returned_tts_model
+    mock_provider.get_tts_model_mock.return_value = mock_returned_tts_model
 
     # Specific settings instance for the voice_config
     config_settings = TTSModelSettings(voice="test_voice_scenario1")
@@ -46,18 +49,17 @@ def test_get_effective_model_name_provided_model_none():
     # First call
     returned_model = voice_config.get_effective_model(mock_provider)
 
-    mock_provider.get_tts_model.assert_called_once_with(
-        model_name="test_model_name",
-        settings=config_settings  # get_effective_model should pass its settings
+    mock_provider.get_tts_model_mock.assert_called_once_with(
+        model_name="test_model_name"
     )
     assert voice_config.tts_model is mock_returned_tts_model
     assert returned_model is mock_returned_tts_model
 
     # Second call
-    mock_provider.get_tts_model.reset_mock() # Reset mock before second call
+    mock_provider.get_tts_model_mock.reset_mock() # Reset mock before second call
     returned_model_again = voice_config.get_effective_model(mock_provider)
 
-    mock_provider.get_tts_model.assert_not_called() # Should not be called again
+    mock_provider.get_tts_model_mock.assert_not_called() # Should not be called again
     assert returned_model_again is mock_returned_tts_model # Should return cached model
 
 
@@ -68,7 +70,7 @@ def test_get_effective_model_instance_provided():
     """
     mock_provider = MockModelProvider()
     # Make provider's method raise an error if called, to ensure it's not
-    mock_provider.get_tts_model.side_effect = AssertionError("Provider should not be called")
+    mock_provider.get_tts_model_mock.side_effect = AssertionError("Provider should not be called")
 
     expected_tts_model_instance = MagicMock(spec=TTSModel)
     config_settings = TTSModelSettings(voice="test_voice_scenario2")
@@ -80,7 +82,7 @@ def test_get_effective_model_instance_provided():
 
     returned_model = voice_config.get_effective_model(mock_provider)
 
-    mock_provider.get_tts_model.assert_not_called()
+    mock_provider.get_tts_model_mock.assert_not_called()
     assert returned_model is expected_tts_model_instance
     assert voice_config.tts_model is expected_tts_model_instance # Should remain the same
 
@@ -92,7 +94,7 @@ def test_get_effective_model_neither_name_nor_instance_provided():
     """
     mock_provider = MockModelProvider()
     mock_default_tts_model = MagicMock(spec=TTSModel)
-    mock_provider.get_tts_model.return_value = mock_default_tts_model
+    mock_provider.get_tts_model_mock.return_value = mock_default_tts_model
 
     config_settings = TTSModelSettings(voice="test_voice_scenario3_default")
     voice_config = VoiceConfiguration(
@@ -104,17 +106,16 @@ def test_get_effective_model_neither_name_nor_instance_provided():
     # First call
     returned_model = voice_config.get_effective_model(mock_provider)
 
-    mock_provider.get_tts_model.assert_called_once_with(
-        model_name=None, # Expecting None or a default to be passed for model_name
-        settings=config_settings
+    mock_provider.get_tts_model_mock.assert_called_once_with(
+        model_name=None # Expecting None or a default to be passed for model_name
     )
     assert voice_config.tts_model is mock_default_tts_model
     assert returned_model is mock_default_tts_model
 
     # Second call (should return cached model)
-    mock_provider.get_tts_model.reset_mock()
+    mock_provider.get_tts_model_mock.reset_mock()
     returned_model_again = voice_config.get_effective_model(mock_provider)
-    mock_provider.get_tts_model.assert_not_called()
+    mock_provider.get_tts_model_mock.assert_not_called()
     assert returned_model_again is mock_default_tts_model
 
 # Optional: Add a test to ensure settings are passed if tts_model instance is already present

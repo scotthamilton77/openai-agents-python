@@ -89,7 +89,7 @@ class VoicePipeline:
         # Create default configuration from pipeline settings
         return VoiceConfiguration(
             tts_model=self.tts_model,
-            tts_model_name=self._tts_model_name, 
+            tts_model_name=self._tts_model_name or (self.tts_model.model_name if self.tts_model else None), 
             tts_settings=self.config.tts_settings
         )
 

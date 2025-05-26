@@ -27,7 +27,7 @@ class VoiceConfiguration:
     
     def get_effective_model(self, model_provider) -> TTSModel:
         """Get the effective TTS model, initializing it if necessary."""
-        if self.tts_model is None and self.tts_model_name is not None:
+        if self.tts_model is None:
             self.tts_model = model_provider.get_tts_model(self.tts_model_name)
         return self.tts_model
 
@@ -91,7 +91,7 @@ class TTSModel(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def run(self, text: str, settings: TTSModelSettings) -> AsyncIterator[bytes]:
+    async def run(self, text: str, settings: TTSModelSettings) -> AsyncIterator[bytes]:
         """Given a text string, produces a stream of audio bytes, in PCM format.
 
         Args:

@@ -27,7 +27,7 @@ class FakeTTS(TTSModel):
     """Fakes TTS by just returning string bytes."""
 
     def __init__(self, strategy: Literal["default", "split_words"] = "default", name: str = "fake_tts"):
-        super().__init__(name=name) # Pass name to parent TTSModel
+        super().__init__()
         self.strategy = strategy
         self.last_run_settings: TTSModelSettings | None = None
         # To distinguish instances in tests if multiple FakeTTS are used with different conceptual names
