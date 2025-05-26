@@ -3,7 +3,7 @@ from __future__ import annotations
 import abc
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Any, Callable, Literal, Protocol, Optional
+from typing import Any, Callable, Literal, Protocol, Optional, runtime_checkable
 
 from .imports import np, npt
 from .input import AudioInput, StreamedAudioInput
@@ -32,6 +32,7 @@ class VoiceConfiguration:
         return self.tts_model
 
 
+@runtime_checkable
 class VoiceConfigurationProvider(Protocol):
     """Protocol for any class that can provide voice configuration."""
     def get_voice_configuration(self) -> Optional[VoiceConfiguration]:
