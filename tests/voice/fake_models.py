@@ -16,6 +16,8 @@ try:
         TTSModel,
         TTSModelSettings,
         VoiceWorkflowBase,
+        VoiceConfiguration,
+        VoiceConfigurationProvider,
     )
 except ImportError:
     pass
@@ -24,14 +26,19 @@ except ImportError:
 class FakeTTS(TTSModel):
     """Fakes TTS by just returning string bytes."""
 
-    def __init__(self, strategy: Literal["default", "split_words"] = "default"):
+    def __init__(self, strategy: Literal["default", "split_words"] = "default", name: str = "fake_tts"):
+        super().__init__(name=name) # Pass name to parent TTSModel
         self.strategy = strategy
+        self.last_run_settings: TTSModelSettings | None = None
+        # To distinguish instances in tests if multiple FakeTTS are used with different conceptual names
+        self.model_name_prop = name 
 
     @property
-    def model_name(self) -> str:
-        return "fake_tts"
+    def model_name(self) -> str: # This is the one TTSModel requires
+        return self.model_name_prop
 
     async def run(self, text: str, settings: TTSModelSettings) -> AsyncIterator[bytes]:
+        self.last_run_settings = settings
         if self.strategy == "default":
             yield np.zeros(2, dtype=np.int16).tobytes()
         elif self.strategy == "split_words":
@@ -86,11 +93,20 @@ class FakeSTT(STTModel):
         return session
 
 
-class FakeWorkflow(VoiceWorkflowBase):
-    """A fake workflow that yields preconfigured outputs."""
+class FakeWorkflow(VoiceWorkflowBase, VoiceConfigurationProvider):
+    """A fake workflow that yields preconfigured outputs and can provide VoiceConfiguration."""
 
-    def __init__(self, outputs: list[list[str]] | None = None):
+    def __init__(
+        self,
+        outputs: list[list[str]] | None = None,
+        voice_configuration: VoiceConfiguration | None = None,
+    ):
+        super().__init__()
         self.outputs = outputs or []
+        self.voice_configuration = voice_configuration
+
+    def get_voice_configuration(self) -> VoiceConfiguration | None:
+        return self.voice_configuration
 
     def add_output(self, output: list[str]) -> None:
         self.outputs.append(output)
