@@ -21,10 +21,170 @@ from agents.items import (
 try:
     from agents.voice import SingleAgentVoiceWorkflow
 
+    from unittest.mock import AsyncMock, Mock, patch
+
+    from agents.agent_runner import RunResultStreaming
+    from agents.voice import (
+        AudioInput,
+        SingleAgentVoiceWorkflow,
+        SingleAgentVoiceWorkflowCallbacks,
+        VoiceConfiguration,
+        VoiceWorkflowBase,
+        TTSModelSettings,
+    )
+
     from ..fake_model import get_response_obj
     from ..test_responses import get_function_tool, get_function_tool_call, get_text_message
 except ImportError:
     pass
+
+
+# --- Tests for VoiceWorkflowBase.get_voice_configuration ---
+
+class MyWorkflow(VoiceWorkflowBase):
+    def __init__(self):
+        super().__init__()
+        self._current_agent_for_test: Agent | None = None
+
+    @property
+    def current_agent(self) -> Agent | None:
+        return self._current_agent_for_test
+
+    @current_agent.setter
+    def current_agent(self, agent: Agent | None) -> None:
+        self._current_agent_for_test = agent
+
+    async def run(self, audio_input: AudioInput) -> AsyncIterator[str]:
+        # No-op implementation for testing get_voice_configuration
+        if False:
+            yield ""
+
+
+class MockAgentSimple:
+    pass
+
+
+class MockAgentWithVoiceConfig:
+    def __init__(self, config: VoiceConfiguration | None):
+        self._config = config
+
+    def get_voice_configuration(self) -> VoiceConfiguration | None:
+        return self._config
+
+
+def test_get_voice_config_no_agent():
+    workflow = MyWorkflow()
+    workflow.current_agent = None
+    assert workflow.get_voice_configuration() is None
+
+
+def test_get_voice_config_agent_no_config():
+    workflow = MyWorkflow()
+    workflow.current_agent = MockAgentSimple()  # type: ignore
+    assert workflow.get_voice_configuration() is None
+
+
+def test_get_voice_config_agent_with_config():
+    workflow = MyWorkflow()
+    expected_config = VoiceConfiguration(tts_settings=TTSModelSettings(voice="test_voice_from_agent"))
+    workflow.current_agent = MockAgentWithVoiceConfig(config=expected_config)  # type: ignore
+    assert workflow.get_voice_configuration() == expected_config
+
+
+# --- End of tests for VoiceWorkflowBase.get_voice_configuration ---
+
+
+# --- Tests for SingleAgentVoiceWorkflow ---
+
+def test_single_agent_workflow_get_voice_configuration():
+    expected_config = VoiceConfiguration(tts_settings=TTSModelSettings(voice="agent_specific_voice"))
+    agent = MockAgentWithVoiceConfig(config=expected_config) # type: ignore
+    workflow = SingleAgentVoiceWorkflow(initial_agent=agent) # type: ignore
+    assert workflow.get_voice_configuration() == expected_config
+
+
+class MockRunResultStreaming(RunResultStreaming):
+    def __init__(self, last_agent: Agent, text_outputs: list[str] | None = None):
+        self._last_agent = last_agent
+        self._text_outputs = text_outputs if text_outputs is not None else []
+
+    async def stream_events(self) -> AsyncIterator[TResponseStreamEvent]:
+        # Simplified stream for testing callbacks and handoff, not full text processing
+        for text in self._text_outputs:
+            yield ResponseTextDeltaEvent(delta=text, type="response.output_text.delta", content_index=0, output_index=0, item_id="fake_item", sequence_number=0) # type: ignore
+        # Yield a completion event so the workflow run finishes
+        yield ResponseCompletedEvent(type="response.completed", response=get_response_obj([]), sequence_number=1) # type: ignore
+
+    def to_input_list(self) -> list[TResponseInputItem]:
+        return []
+
+    @property
+    def last_agent(self) -> Agent:
+        return self._last_agent
+
+
+@pytest.mark.asyncio
+@patch("agents.voice.workflow.Runner.run_streamed")
+async def test_single_agent_workflow_handoff_updates_current_agent(mock_run_streamed: AsyncMock):
+    agent1 = Agent(name="agent1", model=FakeStreamingModel()) # Using FakeStreamingModel for a valid Agent
+    agent2 = Agent(name="agent2", model=FakeStreamingModel())
+
+    mock_run_result = MockRunResultStreaming(last_agent=agent2)
+    mock_run_streamed.return_value = mock_run_result
+
+    workflow = SingleAgentVoiceWorkflow(initial_agent=agent1)
+    async for _ in workflow.run("transcription_for_handoff"):
+        pass
+
+    mock_run_streamed.assert_called_once()
+    assert workflow.current_agent == agent2
+
+
+@pytest.mark.asyncio
+@patch("agents.voice.workflow.Runner.run_streamed")
+async def test_single_agent_workflow_callbacks(mock_run_streamed: AsyncMock):
+    agent1 = Agent(name="agent1_callbacks", model=FakeStreamingModel())
+    agent2 = Agent(name="agent2_callbacks", model=FakeStreamingModel())
+
+    mock_on_run = Mock()
+    mock_on_agent_change = Mock()
+    callbacks = SingleAgentVoiceWorkflowCallbacks(
+        on_run=mock_on_run, on_agent_change=mock_on_agent_change
+    )
+
+    # Simulate handoff for on_agent_change
+    mock_run_result_handoff = MockRunResultStreaming(last_agent=agent2, text_outputs=["handoff text"])
+    mock_run_streamed.return_value = mock_run_result_handoff
+
+    workflow_handoff = SingleAgentVoiceWorkflow(initial_agent=agent1, callbacks=callbacks)
+    transcription_handoff = "transcription_for_callbacks_handoff"
+    async for _ in workflow_handoff.run(transcription_handoff):
+        pass
+
+    mock_on_run.assert_called_once_with(workflow_handoff, transcription_handoff)
+    mock_on_agent_change.assert_called_once_with(workflow_handoff, agent2)
+    assert workflow_handoff.current_agent == agent2 # Verify agent update as well
+
+    # Reset mocks and workflow for a run without handoff
+    mock_run_streamed.reset_mock()
+    mock_on_run.reset_mock()
+    mock_on_agent_change.reset_mock()
+
+    agent3 = Agent(name="agent3_no_handoff", model=FakeStreamingModel())
+    mock_run_result_no_handoff = MockRunResultStreaming(last_agent=agent3, text_outputs=["no handoff text"])
+    mock_run_streamed.return_value = mock_run_result_no_handoff
+
+    workflow_no_handoff = SingleAgentVoiceWorkflow(initial_agent=agent3, callbacks=callbacks)
+    transcription_no_handoff = "transcription_no_handoff"
+    async for _ in workflow_no_handoff.run(transcription_no_handoff):
+        pass
+
+    mock_on_run.assert_called_once_with(workflow_no_handoff, transcription_no_handoff)
+    mock_on_agent_change.assert_not_called() # No handoff, so this should not be called
+    assert workflow_no_handoff.current_agent == agent3
+
+
+# --- End of tests for SingleAgentVoiceWorkflow ---
 
 
 class FakeStreamingModel(Model):
