@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock, Mock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -20,7 +20,7 @@ class MockModelProvider(VoiceModelProvider):
         self.get_tts_model = MagicMock(spec=VoiceModelProvider.get_tts_model)
 
     # Implement other abstract methods if VoiceModelProvider has any, otherwise pass
-    def get_stt_model(self, model_name: str | None = None, settings: TTSModelSettings | None = None):
+    def get_stt_model(self, model_name: str | None = None, settings: STTModelSettings | None = None):
         raise NotImplementedError("STT model provider not implemented for these tests.")
 
 
