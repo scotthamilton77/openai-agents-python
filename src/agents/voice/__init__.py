@@ -8,6 +8,8 @@ from .model import (
     TTSModel,
     TTSModelSettings,
     TTSVoice,
+    VoiceConfiguration,
+    VoiceConfigurationProvider,
     VoiceModelProvider,
 )
 from .models.openai_model_provider import OpenAIVoiceModelProvider
@@ -17,6 +19,7 @@ from .pipeline import VoicePipeline
 from .pipeline_config import VoicePipelineConfig
 from .result import StreamedAudioResult
 from .utils import get_sentence_based_splitter
+from .voiceagent import VoiceAgentMixin
 from .workflow import (
     SingleAgentVoiceWorkflow,
     SingleAgentWorkflowCallbacks,
@@ -32,11 +35,14 @@ __all__ = [
     "TTSModel",
     "TTSModelSettings",
     "TTSVoice",
+    "VoiceConfiguration",
+    "VoiceConfigurationProvider",
     "VoiceModelProvider",
     "StreamedAudioResult",
     "SingleAgentVoiceWorkflow",
     "OpenAIVoiceModelProvider",
     "OpenAISTTModel",
+    "OpenAISTTTranscriptionSession",
     "OpenAITTSModel",
     "VoiceStreamEventAudio",
     "VoiceStreamEventLifecycle",
@@ -49,5 +55,6 @@ __all__ = [
     "SingleAgentWorkflowCallbacks",
     "StreamedTranscriptionSession",
     "OpenAISTTTranscriptionSession",
+    "VoiceAgentMixin",
     "STTWebsocketConnectionError",
 ]
