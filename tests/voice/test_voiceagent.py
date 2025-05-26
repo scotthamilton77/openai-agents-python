@@ -21,7 +21,7 @@ from agents.voice import (
     VoiceConfiguration,
 )
 from agents.voice.voiceagent import with_voice_config, with_voice_configuration
-
+from agents.tracing import ModelTracing
 
 
 # --- Mock Model for Agent Instantiation ---
