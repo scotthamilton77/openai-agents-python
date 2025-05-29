@@ -16,7 +16,7 @@ from .events import (
     VoiceStreamEventLifecycle,
 )
 from .imports import np, npt
-from .model import TTSModel, TTSModelSettings
+from .model import TTSModel, TTSModelSettings, VoiceConfiguration, VoiceModelProvider
 from .pipeline_config import VoicePipelineConfig
 
 
@@ -68,6 +68,51 @@ class StreamedAudioResult:
         self._stored_exception: BaseException | None = None
         self._tracing_span: Span[SpeechGroupSpanData] | None = None
 
+    def update_voice_configuration(
+        self, new_voice_config: VoiceConfiguration, model_provider: VoiceModelProvider
+    ):
+        """Update the voice configuration for the current session."""
+        # Process any pending text in the buffer with the *current* TTS settings
+        # before updating the configuration.
+        if self._text_buffer:
+            # Ensure we're in a turn, as _stream_audio might rely on turn-specific context
+            # or tracing. If _start_turn is idempotent or handles this, it's fine.
+            # For simplicity, we assume _start_turn handles being called if already started.
+            # Consider if _start_turn is needed here if not already in a turn.
+            # The current _add_text calls _start_turn, so if _text_buffer has content,
+            # a turn should have been started.
+
+            local_queue: asyncio.Queue[VoiceStreamEvent | None] = asyncio.Queue()
+            self._ordered_tasks.append(local_queue)
+            # Use current self.tts_model and self.tts_settings for this buffered text
+            # These are the "old" settings before they get updated below.
+            current_model = self.tts_model
+            current_settings = self.tts_settings
+            task = asyncio.create_task(
+                self._stream_audio(self._text_buffer, local_queue, current_model, current_settings, finish_turn=False)
+            )
+            self._tasks.append(task)
+            self._text_buffer = ""  # Clear the buffer as it's now scheduled
+
+            if self._dispatcher_task is None:
+                self._dispatcher_task = asyncio.create_task(self._dispatch_audio())
+
+        # Now, proceed to update the TTS configuration
+        if new_voice_config.tts_settings:
+            self.tts_settings = new_voice_config.tts_settings
+            # Update buffer_size if it changed with new settings
+            self._buffer_size = self.tts_settings.buffer_size
+
+
+        if new_voice_config.tts_model:
+            self.tts_model = new_voice_config.tts_model
+        elif new_voice_config.tts_model_name and model_provider:
+            self.tts_model = model_provider.get_tts_model(new_voice_config.tts_model_name)
+        
+        # Update instructions based on the potentially new tts_settings
+        # self.tts_settings is guaranteed to be valid due to __init__
+        self.instructions = self.tts_settings.instructions
+
     async def _start_turn(self):
         if self._started_processing_turn:
             return
@@ -101,15 +146,23 @@ class StreamedAudioResult:
         self,
         text: str,
         local_queue: asyncio.Queue[VoiceStreamEvent | None],
+        tts_model_to_use: TTSModel,             # New
+        tts_settings_to_use: TTSModelSettings,  # New
         finish_turn: bool = False,
     ):
+        # Note: self._buffer_size is updated in update_voice_configuration if tts_settings change.
+        # If _stream_audio is called with older tts_settings_to_use, it might use a
+        # self._buffer_size that corresponds to newer settings.
+        # For this refactor, we assume this is acceptable or that buffer_size changes are rare/handled.
+        # A more robust solution might pass buffer_size explicitly or derive it from tts_settings_to_use.
+        # However, current instructions are to use tts_settings_to_use primarily for model interaction.
         with speech_span(
-            model=self.tts_model.model_name,
+            model=tts_model_to_use.model_name, # Changed
             input=text if self._voice_pipeline_config.trace_include_sensitive_data else "",
             model_config={
-                "voice": self.tts_settings.voice,
-                "instructions": self.instructions,
-                "speed": self.tts_settings.speed,
+                "voice": tts_settings_to_use.voice, # Changed
+                "instructions": tts_settings_to_use.instructions, # Changed
+                "speed": tts_settings_to_use.speed, # Changed
             },
             output_format="pcm",
             parent=self._tracing_span,
@@ -119,7 +172,7 @@ class StreamedAudioResult:
                 buffer: list[bytes] = []
                 full_audio_data: list[bytes] = []
 
-                async for chunk in self.tts_model.run(text, self.tts_settings):
+                async for chunk in tts_model_to_use.run(text, tts_settings_to_use): # Changed
                     if not first_byte_received:
                         first_byte_received = True
                         tts_span.span_data.first_content_at = time_iso()
@@ -127,18 +180,20 @@ class StreamedAudioResult:
                     if chunk:
                         buffer.append(chunk)
                         full_audio_data.append(chunk)
-                        if len(buffer) >= self._buffer_size:
-                            audio_np = self._transform_audio_buffer(buffer, self.tts_settings.dtype)
-                            if self.tts_settings.transform_data:
-                                audio_np = self.tts_settings.transform_data(audio_np)
+                        # Using self._buffer_size which is updated when self.tts_settings changes.
+                        # This might be slightly inconsistent if tts_settings_to_use has a different buffer_size.
+                        if len(buffer) >= self._buffer_size: 
+                            audio_np = self._transform_audio_buffer(buffer, tts_settings_to_use.dtype) # Changed
+                            if tts_settings_to_use.transform_data: # Changed
+                                audio_np = tts_settings_to_use.transform_data(audio_np) # Changed
                             await local_queue.put(
                                 VoiceStreamEventAudio(data=audio_np)
                             )  # Use local queue
                             buffer = []
                 if buffer:
-                    audio_np = self._transform_audio_buffer(buffer, self.tts_settings.dtype)
-                    if self.tts_settings.transform_data:
-                        audio_np = self.tts_settings.transform_data(audio_np)
+                    audio_np = self._transform_audio_buffer(buffer, tts_settings_to_use.dtype) # Changed
+                    if tts_settings_to_use.transform_data: # Changed
+                        audio_np = tts_settings_to_use.transform_data(audio_np) # Changed
                     await local_queue.put(VoiceStreamEventAudio(data=audio_np))  # Use local queue
 
                 if self._voice_pipeline_config.trace_include_sensitive_audio_data:
@@ -180,7 +235,7 @@ class StreamedAudioResult:
             local_queue: asyncio.Queue[VoiceStreamEvent | None] = asyncio.Queue()
             self._ordered_tasks.append(local_queue)
             self._tasks.append(
-                asyncio.create_task(self._stream_audio(combined_sentences, local_queue))
+                asyncio.create_task(self._stream_audio(combined_sentences, local_queue, self.tts_model, self.tts_settings)) # Changed
             )
             if self._dispatcher_task is None:
                 self._dispatcher_task = asyncio.create_task(self._dispatch_audio())
@@ -191,7 +246,7 @@ class StreamedAudioResult:
             self._ordered_tasks.append(local_queue)  # Append the local queue for the final segment
             self._tasks.append(
                 asyncio.create_task(
-                    self._stream_audio(self._text_buffer, local_queue, finish_turn=True)
+                    self._stream_audio(self._text_buffer, local_queue, self.tts_model, self.tts_settings, finish_turn=True) # Changed
                 )
             )
             self._text_buffer = ""

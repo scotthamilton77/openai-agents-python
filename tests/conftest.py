@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from agents.models import _openai_shared
-from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
-from agents.models.openai_responses import OpenAIResponsesModel
-from agents.tracing import set_trace_processors
-from agents.tracing.setup import GLOBAL_TRACE_PROVIDER
+from src.agents.models import _openai_shared
+from src.agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
+from src.agents.models.openai_responses import OpenAIResponsesModel
+from src.agents.tracing import set_trace_processors
+from src.agents.tracing.setup import GLOBAL_TRACE_PROVIDER
 
 from .testing_processor import SPAN_PROCESSOR_TESTING
 

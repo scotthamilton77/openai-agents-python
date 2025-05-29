@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import abc
 from collections.abc import AsyncIterator
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from ..agent import Agent
 from ..items import TResponseInputItem
 from ..result import RunResultStreaming
 from ..run import Runner
+from ..stream_events import AgentUpdatedStreamEvent, RawResponsesStreamEvent
 from .model import VoiceConfiguration, VoiceConfigurationProvider
 
 
@@ -107,7 +108,7 @@ class SingleAgentVoiceWorkflow(VoiceWorkflowBase):
         """Get the current agent."""
         return self._current_agent
 
-    async def run(self, transcription: str) -> AsyncIterator[str]:
+    async def run(self, transcription: str) -> AsyncIterator[Union[str, AgentUpdatedStreamEvent]]:
         if self._callbacks:
             self._callbacks.on_run(self, transcription)
 
@@ -122,9 +123,16 @@ class SingleAgentVoiceWorkflow(VoiceWorkflowBase):
         # Run the agent
         result = Runner.run_streamed(self._current_agent, self._input_history)
 
-        # Stream the text from the result
-        async for chunk in VoiceWorkflowHelper.stream_text_from(result):
-            yield chunk
+        # Stream events from the result
+        async for event in result.stream_events():
+            if (
+                isinstance(event, RawResponsesStreamEvent)
+                and event.data.get("type") == "response.output_text.delta" # Use .get() for safety
+                and event.data.get("delta") # Check if delta exists and is not empty
+            ):
+                yield event.data["delta"]
+            elif isinstance(event, AgentUpdatedStreamEvent):
+                yield event
 
         # Update the input history and current agent
         self._input_history = result.to_input_list()

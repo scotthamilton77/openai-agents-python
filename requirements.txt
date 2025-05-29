@@ -1,0 +1,7 @@
+openai
+pytest
+griffe
+numpy
+websockets
+pytest-mock
+pytest-asyncio

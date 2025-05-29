@@ -5,6 +5,7 @@ import asyncio
 from .._run_impl import TraceCtxManager
 from ..exceptions import UserError
 from ..logger import logger
+from ..stream_events import AgentUpdatedStreamEvent
 from .input import AudioInput, StreamedAudioInput
 from .model import STTModel, TTSModel, VoiceConfiguration, VoiceConfigurationProvider
 from .pipeline_config import VoicePipelineConfig
@@ -130,8 +131,17 @@ class VoicePipeline:
 
             async def stream_events():
                 try:
-                    async for text_event in self.workflow.run(input_text):
-                        await output._add_text(text_event)
+                    async for event in self.workflow.run(input_text):
+                        if isinstance(event, str):
+                            await output._add_text(event)
+                        elif isinstance(event, AgentUpdatedStreamEvent):
+                            new_agent = event.new_agent
+                            if isinstance(new_agent, VoiceConfigurationProvider):
+                                voice_config = new_agent.get_voice_configuration()
+                                if voice_config:
+                                    output.update_voice_configuration(
+                                        voice_config, self.config.model_provider
+                                    )
                     await output._turn_done()
                     await output._done()
                 except Exception as e:
@@ -170,8 +180,17 @@ class VoicePipeline:
                 try:
                     async for input_text in transcription_session.transcribe_turns():
                         result = self.workflow.run(input_text)
-                        async for text_event in result:
-                            await output._add_text(text_event)
+                        async for event in result:
+                            if isinstance(event, str):
+                                await output._add_text(event)
+                            elif isinstance(event, AgentUpdatedStreamEvent):
+                                new_agent = event.new_agent
+                                if isinstance(new_agent, VoiceConfigurationProvider):
+                                    voice_config = new_agent.get_voice_configuration()
+                                    if voice_config:
+                                        output.update_voice_configuration(
+                                            voice_config, self.config.model_provider
+                                        )
                         await output._turn_done()
                 except Exception as e:
                     logger.error(f"Error processing turns: {e}")

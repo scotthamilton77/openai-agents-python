@@ -2,7 +2,7 @@ import functools
 import json
 from typing import TYPE_CHECKING, Any
 
-from agents.strict_schema import ensure_strict_json_schema
+from ..strict_schema import ensure_strict_json_schema
 
 from .. import _debug
 from ..exceptions import AgentsException, ModelBehaviorError, UserError
